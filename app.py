@@ -104,7 +104,7 @@ if step == "1. PDFアップロード":
     if st.session_state.pdf_files:
         if st.button("次へ: 座標指定"):
             # 次のステップに移動
-            st.experimental_rerun()
+            st.rerun()
 
 # ステップ2: 座標の指定
 elif step == "2. 座標指定":
@@ -145,7 +145,7 @@ elif step == "2. 座標指定":
         
         if st.session_state.coords:
             if st.button("次へ: テキスト抽出"):
-                st.experimental_rerun()
+                st.rerun()
 
 # ステップ3: テキスト抽出処理
 elif step == "3. テキスト抽出":
@@ -185,11 +185,11 @@ elif step == "3. テキスト抽出":
                 st.session_state.processing_complete = True
                 status_text.text("処理完了!")
                 st.success("すべてのPDFからテキスト抽出が完了しました")
-                st.experimental_rerun()
+                st.rerun()
         else:
             st.success("テキスト抽出が完了しています")
             if st.button("結果を表示"):
-                st.experimental_rerun()
+                st.rerun()
 
 # ステップ4: 結果表示
 elif step == "4. 結果表示":
@@ -215,4 +215,4 @@ elif step == "4. 結果表示":
             # セッション状態をリセット
             for key in st.session_state.keys():
                 del st.session_state[key]
-            st.experimental_rerun()
+            st.rerun()
