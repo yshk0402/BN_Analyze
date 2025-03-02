@@ -1,14 +1,9 @@
 import streamlit as st
 import fitz  # PyMuPDF
 import pandas as pd
-import numpy as np
-from pdf2image import convert_from_bytes
-from PIL import Image
-import io
 import base64
 import tempfile
 import os
-from streamlit_drawable_canvas import st_canvas
 import time
 
 # アプリケーションのタイトルと説明
@@ -23,10 +18,6 @@ if 'extraction_results' not in st.session_state:
     st.session_state.extraction_results = []
 if 'pdf_files' not in st.session_state:
     st.session_state.pdf_files = None
-if 'first_pdf_image' not in st.session_state:
-    st.session_state.first_pdf_image = None
-if 'canvas_result' not in st.session_state:
-    st.session_state.canvas_result = None
 if 'processing_complete' not in st.session_state:
     st.session_state.processing_complete = False
 
@@ -36,6 +27,27 @@ step = st.sidebar.radio(
     "ステップ",
     ["1. PDFアップロード", "2. 座標指定", "3. テキスト抽出", "4. 結果表示"]
 )
+
+# PDFの最初のページ情報を取得する関数
+def get_pdf_first_page_info(pdf_file):
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp:
+            tmp.write(pdf_file.getvalue())
+            tmp_path = tmp.name
+        
+        doc = fitz.open(tmp_path)
+        if doc.page_count > 0:
+            page = doc[0]  # 1ページ目を取得
+            width = page.rect.width
+            height = page.rect.height
+            # 一時ファイルを削除
+            doc.close()
+            os.unlink(tmp_path)
+            return True, width, height
+        else:
+            return False, 0, 0
+    except Exception as e:
+        return False, 0, 0
 
 # PDFファイルから座標に基づいてテキストを抽出する関数
 def extract_text_from_pdf(pdf_file, coords):
@@ -48,20 +60,8 @@ def extract_text_from_pdf(pdf_file, coords):
         if doc.page_count > 0:
             page = doc[0]  # 1ページ目を取得
             
-            # 座標変換（キャンバスの座標からPDF座標に）
-            # ここではシンプルな例として、画像サイズとPDFサイズの比率で変換
-            img_width, img_height = st.session_state.first_pdf_image.size
-            pdf_width, pdf_height = page.rect.width, page.rect.height
-            
-            scale_x = pdf_width / img_width
-            scale_y = pdf_height / img_height
-            
-            x1 = coords["left"] * scale_x
-            y1 = coords["top"] * scale_y
-            x2 = (coords["left"] + coords["width"]) * scale_x
-            y2 = (coords["top"] + coords["height"]) * scale_y
-            
             # 指定された領域からテキストを抽出
+            x1, y1, x2, y2 = coords
             rect = fitz.Rect(x1, y1, x2, y2)
             text = page.get_text("text", clip=rect)
             
@@ -89,21 +89,16 @@ if step == "1. PDFアップロード":
         st.session_state.pdf_files = uploaded_files
         st.success(f"{len(uploaded_files)}個のPDFファイルがアップロードされました")
         
-        # 最初のPDFを画像に変換して表示
-        try:
-            with st.spinner("最初のPDFを処理中..."):
-                images = convert_from_bytes(uploaded_files[0].getvalue(), first_page=1, last_page=1)
-                if images:
-                    st.session_state.first_pdf_image = images[0]
-                    st.image(st.session_state.first_pdf_image, caption="最初のPDF - 1ページ目", use_column_width=True)
-                else:
-                    st.error("PDFの変換に失敗しました")
-        except Exception as e:
-            st.error(f"PDFの処理中にエラーが発生しました: {str(e)}")
+        # 最初のPDFの情報を取得して表示
+        success, width, height = get_pdf_first_page_info(uploaded_files[0])
+        if success:
+            st.info(f"最初のPDFの1ページ目サイズ: 幅={width:.1f}pt, 高さ={height:.1f}pt")
+            st.session_state.pdf_dimensions = (width, height)
+        else:
+            st.error("PDFの情報取得に失敗しました")
     
     if st.session_state.pdf_files:
         if st.button("次へ: 座標指定"):
-            # 次のステップに移動
             st.rerun()
 
 # ステップ2: 座標の指定
@@ -112,40 +107,30 @@ elif step == "2. 座標指定":
     
     if st.session_state.pdf_files is None:
         st.warning("PDFファイルがアップロードされていません。ステップ1に戻ってください。")
-    elif st.session_state.first_pdf_image is None:
-        st.warning("PDFの画像変換に失敗しました。ステップ1に戻ってください。")
     else:
-        st.write("1ページ目に表示されている最初のPDFから、抽出したいテキスト領域を四角形で囲んでください。")
+        st.write("テキストを抽出したい座標を入力してください (PDFの座標系を使用)")
         
-        # 画像サイズを取得
-        img_width, img_height = st.session_state.first_pdf_image.size
+        # PDFのサイズ情報があれば表示
+        if 'pdf_dimensions' in st.session_state:
+            width, height = st.session_state.pdf_dimensions
+            st.info(f"PDFサイズ参考情報: 幅={width:.1f}pt, 高さ={height:.1f}pt")
         
-        # 描画可能なキャンバスを作成
-        canvas_result = st_canvas(
-            fill_color="rgba(255, 165, 0, 0.3)",
-            stroke_width=2,
-            stroke_color="#FF0000",
-            background_image=st.session_state.first_pdf_image,
-            update_streamlit=True,
-            height=img_height,
-            width=img_width,
-            drawing_mode="rect",
-            key="canvas",
-        )
+        col1, col2 = st.columns(2)
+        with col1:
+            x1 = st.number_input("左上 X座標", value=100.0, step=10.0)
+            y1 = st.number_input("左上 Y座標", value=100.0, step=10.0)
         
-        # キャンバスの結果を保存
-        if canvas_result.json_data is not None and len(canvas_result.json_data["objects"]) > 0:
-            st.session_state.canvas_result = canvas_result.json_data
-            # 最後に描画された四角形の座標を取得
-            last_rect = canvas_result.json_data["objects"][-1]
-            st.session_state.coords = last_rect
-            
-            st.success("座標が指定されました")
-            st.write(f"指定座標: X={last_rect['left']:.1f}, Y={last_rect['top']:.1f}, 幅={last_rect['width']:.1f}, 高さ={last_rect['height']:.1f}")
+        with col2:
+            x2 = st.number_input("右下 X座標", value=300.0, step=10.0)
+            y2 = st.number_input("右下 Y座標", value=150.0, step=10.0)
         
-        if st.session_state.coords:
-            if st.button("次へ: テキスト抽出"):
-                st.rerun()
+        st.info("ヒント: PDFの座標は左上が原点(0,0)で、右下に向かって値が大きくなります。")
+        st.write(f"指定座標: 左上=({x1}, {y1}), 右下=({x2}, {y2})")
+        
+        if st.button("次へ: テキスト抽出"):
+            # 座標を保存して次へ
+            st.session_state.coords = (x1, y1, x2, y2)
+            st.rerun()
 
 # ステップ3: テキスト抽出処理
 elif step == "3. テキスト抽出":
@@ -153,7 +138,7 @@ elif step == "3. テキスト抽出":
     
     if st.session_state.pdf_files is None:
         st.warning("PDFファイルがアップロードされていません。ステップ1に戻ってください。")
-    elif st.session_state.coords is None:
+    elif 'coords' not in st.session_state:
         st.warning("座標が指定されていません。ステップ2に戻ってください。")
     else:
         if not st.session_state.processing_complete:
